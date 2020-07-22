@@ -283,7 +283,8 @@ impl FieldElement5x52 {
             let a = a0 as i64 - a1 as i64;
             let b = b0 as i64 - b1 as i64;
             let ab = a as i128 * b as i128;
-            ((s as i128) + ab) as u128
+            //((s as i128) + ab) as u128
+            s.wrapping_add(ab as u128)
         }
 
         #[inline(always)]
@@ -331,49 +332,114 @@ impl FieldElement5x52 {
 
         // At this point `r0 + r1 * 2^52 + ... + r8 * 2^(52*8) == x * y`.
 
+        const LOW_52_BIT_MASK: u128 = (1 << 52) - 1;
+        const LOW_48_BIT_MASK: u128  = (1 << 48) - 1;
+        const R: u128 = 0x1000003D10; // R = 2^256 mod p
+
+        let mut l0 = r0;
+        let mut l1 = r1;
+        let mut l2 = r2;
+        let mut l3 = r3;
+        let mut mid = r4;
+        let mut h0 = r5;
+        let mut h1 = r6;
+        let mut h2 = r7;
+        let mut h3 = r8;
+
+        // Setup for arithmetic
+        let mut out = [0u64; 5];
+        let mut carry: u128 = 0;
+
+        // The idea is we multiply the high bits with R and add it to the low bits.
+        // Then we set the carries for each with the the high bits beyond the limb.
+
+        // c*2^156
+        l3 += (h3 & LOW_52_BIT_MASK) * R;
+        out[3] = (l3 & LOW_52_BIT_MASK) as u64;
+        h3 >>= 52;
+        l3 >>= 52;
+
+        // c*2^208
+        mid += ((l3 as u64) as u128) + (((h3 as u64) as u128) * R);
+        out[4] = ((mid & LOW_52_BIT_MASK) & LOW_48_BIT_MASK) as u64;
+        carry = (mid & LOW_52_BIT_MASK) >> 48;
+        mid >>= 52;
+
+        // c*2^0
+        h0 += ((mid as u64) as u128);
+        l0 += (((((h0 & LOW_52_BIT_MASK) << 4) | carry) as u64) as u128) * (((R as u64) >> 4) as u128);
+        out[0] = (l0 & LOW_52_BIT_MASK) as u64;
+        h0 >>= 52;
+        l0 >>= 52;
+
+        // c*2^52
+        h1 += ((h0 as u64) as u128);
+        l1 += (((l0 as u64) as u128)) + ((h1 & LOW_52_BIT_MASK) * R);
+        out[1] = (l1 & LOW_52_BIT_MASK) as u64;
+        h1 >>= 52;
+        l1 >>= 52;
+
+        // c*2^104
+        h2 += ((h1 as u64) as u128);
+        l2 += ((l1 as u64) as u128) + ((h2 & LOW_52_BIT_MASK) * R);
+        out[2] = (l2 & LOW_52_BIT_MASK) as u64;
+        h2 >>= 52;
+        l2 >>= 52;
+
+        // c*2^156
+        l3 = ((l2 as u64) as u128) + (((h2 as u64) as u128) * R) + out[3] as u128;
+        out[3] = (l3 & LOW_52_BIT_MASK) as u64;
+        l3 >>= 52;
+
+        // c*2^208
+        out[4] = (((l3 as u64) as u128) + out[4] as u128) as u64;
+
+        FieldElement5x52(out)
+
+        /*
         // Reduction from 464 (== start of r4 + 256) bits to the end
         let (r8_hi, r8_lo) = split_at(r8, 464 - 416);
         let (r7_hi, r7_lo) = split_at(r7, 464 - 364);
         let z = r8_hi + trunc_to_64(r7_hi);
         let r7 = r7_lo;
-        let r8 = trunc_to_64(r8_lo);
+        let r8 = r8_lo as u64;
         let r4 = r4 + z * c;
 
         // Reduction from 412 (== start of r3 + 256) bits to the end
         let (r7_hi, r7_lo) = split_at(r7, 412 - 364);
         let (r6_hi, r6_lo) = split_at(r6, 412 - 312);
-        let z = ((r8 as u64) << 4) + r7_hi as u64 + r6_hi as u64;
+        let z = (r8 << 4) + r7_hi as u64 + r6_hi as u64;
         let r6 = r6_lo;
-        let r7 = r7_lo;
+        let r7 = r7_lo as u64;
         // r8 == 0
         let r3 = r3 + z as u128 * c;
 
         // Reduction from 360 (== start of r2 + 256) bits to the end
         let (r6_hi, r6_lo) = split_at(r6, 360 - 312);
         let (r5_hi, r5_lo) = split_at(r5, 360 - 260);
-        let z = (r7 << 4) + r6_hi + r5_hi;
+        let z = (r7 << 4) + r6_hi as u64 + r5_hi as u64;
         let r5 = r5_lo;
-        let r6 = r6_lo;
+        let r6 = r6_lo as u64;
         // r7 == 0
-        let r2 = r2 + z * c;
+        let r2 = r2 + z as u128 * c;
 
         // Reduction from 308 (== start of r1 + 256) bits to the end
         let (r5_hi, r5_lo) = split_at(r5, 308 - 260);
         let (r4_hi, r4_lo) = split_at(r4, 308 - 208);
-        let z = (r6 << 4) + r5_hi + r4_hi;
+        let z = (r6 << 4) + r5_hi as u64 + r4_hi as u64;
         let r4 = r4_lo;
-        let r5 = r5_lo;
+        let r5 = r5_lo as u64;
         // r6 == 0
-        let r1 = r1 + z * c;
+        let r1 = r1 + z as u128 * c;
 
         // Reduction from 256 bits to the end
         let (r4_hi, r4_lo) = split_at(r4, 256 - 208);
         let (r3_hi, r3_lo) = split_at(r3, 256 - 156);
-        let z = (r5 << 4) + r4_hi + r3_hi;
+        let z = (r5 << 4) + r4_hi as u64 + r3_hi as u64;
         let r3 = r3_lo;
-        let r4 = r4_lo;
+        let r4 = r4_lo as u64;
         // r5 == 0
-        let r0 = r0 + z * c;
+        let r0 = r0 + z as u128 * c;
 
         // Transfer excesses
         let (r0_hi, r0_lo) = split_at(r0, 52);
@@ -389,7 +455,7 @@ impl FieldElement5x52 {
         let r2 = r2_lo as u64;
 
         let (r3_hi, r3_lo) = split_at(r3, 52);
-        let r4 = r4 as u64 + r3_hi as u64;
+        let r4 = r4 + r3_hi as u64;
         let r3 = r3_lo as u64;
 
         debug_assert!(r0 >> 52 == 0);
@@ -400,6 +466,7 @@ impl FieldElement5x52 {
 
         // FIXME: r4 may have an excess of 2 bits. Should be possible to bring it down to 1.
         Self([r0, r1, r2, r3, r4])
+        */
     }
 
     #[inline(always)]
