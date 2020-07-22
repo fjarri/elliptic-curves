@@ -271,6 +271,139 @@ impl FieldElement5x52 {
 
     #[inline(always)]
     fn mul_inner(&self, rhs: &Self) -> Self {
+
+        #[inline(always)]
+        fn split_at(x: u128, s: usize) -> (u128, u128) {
+            let t = x >> s;
+            (t, x ^ (t << s))
+        }
+
+        #[inline(always)]
+        fn add_muldiffs(s: u128, a0: u64, a1: u64, b0: u64, b1: u64) -> u128 {
+            let a = a0 as i64 - a1 as i64;
+            let b = b0 as i64 - b1 as i64;
+            let ab = a as i128 * b as i128;
+            ((s as i128) + ab) as u128
+        }
+
+        #[inline(always)]
+        fn trunc_to_64(s: u128) -> u128 { (s as u64) as u128 }
+
+        let a0 = self.0[0];
+        let a1 = self.0[1];
+        let a2 = self.0[2];
+        let a3 = self.0[3];
+        let a4 = self.0[4];
+        let b0 = rhs.0[0];
+        let b1 = rhs.0[1];
+        let b2 = rhs.0[2];
+        let b3 = rhs.0[3];
+        let b4 = rhs.0[4];
+        let c = 0x1000003D1u128;
+
+        let d0 = a0 as u128 * b0 as u128;
+        let d1 = a1 as u128 * b1 as u128;
+        let d2 = a2 as u128 * b2 as u128;
+        let d3 = a3 as u128 * b3 as u128;
+        let d4 = a4 as u128 * b4 as u128;
+
+        let mut s = d0;
+        let r0 = s;
+        s = s + d1;
+        let r1 = add_muldiffs(s, a1, a0, b0, b1);
+        s = s + d2;
+        let r2 = add_muldiffs(s, a2, a0, b0, b2);
+        s = s + d3;
+        let r3 = add_muldiffs(s, a2, a1, b1, b2);
+        let r3 = add_muldiffs(r3, a3, a0, b0, b3);
+        s = s + d4;
+        let r4 = add_muldiffs(s, a3, a1, b1, b3);
+        let r4 = add_muldiffs(r4, a4, a0, b0, b4);
+        s = s - d0;
+        let r5 = add_muldiffs(s, a3, a2, b2, b3);
+        let r5 = add_muldiffs(r5, a4, a1, b1, b4);
+        s = s - d1;
+        let r6 = add_muldiffs(s, a4, a2, b2, b4);
+        s = s - d2;
+        let r7 = add_muldiffs(s, a4, a3, b3, b4);
+        s = s - d3;
+        let r8 = s;
+
+        // At this point `r0 + r1 * 2^52 + ... + r8 * 2^(52*8) == x * y`.
+
+        // Reduction from 464 (== start of r4 + 256) bits to the end
+        let (r8_hi, r8_lo) = split_at(r8, 464 - 416);
+        let (r7_hi, r7_lo) = split_at(r7, 464 - 364);
+        let z = r8_hi + trunc_to_64(r7_hi);
+        let r7 = r7_lo;
+        let r8 = trunc_to_64(r8_lo);
+        let r4 = r4 + z * c;
+
+        // Reduction from 412 (== start of r3 + 256) bits to the end
+        let (r7_hi, r7_lo) = split_at(r7, 412 - 364);
+        let (r6_hi, r6_lo) = split_at(r6, 412 - 312);
+        let z = ((r8 as u64) << 4) + r7_hi as u64 + r6_hi as u64;
+        let r6 = r6_lo;
+        let r7 = r7_lo;
+        // r8 == 0
+        let r3 = r3 + z as u128 * c;
+
+        // Reduction from 360 (== start of r2 + 256) bits to the end
+        let (r6_hi, r6_lo) = split_at(r6, 360 - 312);
+        let (r5_hi, r5_lo) = split_at(r5, 360 - 260);
+        let z = (r7 << 4) + r6_hi + r5_hi;
+        let r5 = r5_lo;
+        let r6 = r6_lo;
+        // r7 == 0
+        let r2 = r2 + z * c;
+
+        // Reduction from 308 (== start of r1 + 256) bits to the end
+        let (r5_hi, r5_lo) = split_at(r5, 308 - 260);
+        let (r4_hi, r4_lo) = split_at(r4, 308 - 208);
+        let z = (r6 << 4) + r5_hi + r4_hi;
+        let r4 = r4_lo;
+        let r5 = r5_lo;
+        // r6 == 0
+        let r1 = r1 + z * c;
+
+        // Reduction from 256 bits to the end
+        let (r4_hi, r4_lo) = split_at(r4, 256 - 208);
+        let (r3_hi, r3_lo) = split_at(r3, 256 - 156);
+        let z = (r5 << 4) + r4_hi + r3_hi;
+        let r3 = r3_lo;
+        let r4 = r4_lo;
+        // r5 == 0
+        let r0 = r0 + z * c;
+
+        // Transfer excesses
+        let (r0_hi, r0_lo) = split_at(r0, 52);
+        let r1 = r1 + r0_hi;
+        let r0 = r0_lo as u64;
+
+        let (r1_hi, r1_lo) = split_at(r1, 52);
+        let r2 = r2 + r1_hi;
+        let r1 = r1_lo as u64;
+
+        let (r2_hi, r2_lo) = split_at(r2, 52);
+        let r3 = r3 + r2_hi;
+        let r2 = r2_lo as u64;
+
+        let (r3_hi, r3_lo) = split_at(r3, 52);
+        let r4 = r4 as u64 + r3_hi as u64;
+        let r3 = r3_lo as u64;
+
+        debug_assert!(r0 >> 52 == 0);
+        debug_assert!(r1 >> 52 == 0);
+        debug_assert!(r2 >> 52 == 0);
+        debug_assert!(r3 >> 52 == 0);
+        debug_assert!(r4 >> 50 == 0);
+
+        // FIXME: r4 may have an excess of 2 bits. Should be possible to bring it down to 1.
+        Self([r0, r1, r2, r3, r4])
+    }
+
+    #[inline(always)]
+    fn _mul_inner(&self, rhs: &Self) -> Self {
         /*
         `square()` is just `mul()` with equal arguments. Rust compiler is smart enough
         to do all the necessary optimizations for this case, but it needs to have this information
