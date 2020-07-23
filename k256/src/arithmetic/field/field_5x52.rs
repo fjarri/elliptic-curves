@@ -273,9 +273,27 @@ impl FieldElement5x52 {
     fn mul_inner(&self, rhs: &Self) -> Self {
 
         #[inline(always)]
-        fn split_at(x: u128, s: usize) -> (u128, u128) {
+        fn split_at_hi64(x: u128, s: usize) -> (u64, u128) {
             let t = x >> s;
-            (t, x ^ (t << s))
+            (t as u64, x ^ (t << s))
+        }
+
+        #[inline(always)]
+        fn split_at_64(x: u128, s: usize) -> (u64, u64) {
+            let t = x >> s;
+            (t as u64, (x as u64) ^ ((t as u64) << s))
+        }
+
+        #[inline(always)]
+        fn split_at_52_lo64(x: u128) -> (u128, u64) {
+            let t = x >> 52;
+            (t, (x as u64) & 0xFFFFFFFFFFFFFu64)
+        }
+
+        #[inline(always)]
+        fn split_at_52_64(x: u128) -> (u64, u64) {
+            let t = x >> 52;
+            (t as u64, (x as u64) & 0xFFFFFFFFFFFFFu64)
         }
 
         #[inline(always)]
@@ -286,9 +304,6 @@ impl FieldElement5x52 {
             //((s as i128) + ab) as u128
             s.wrapping_add(ab as u128)
         }
-
-        #[inline(always)]
-        fn trunc_to_64(s: u128) -> u128 { (s as u64) as u128 }
 
         let a0 = self.0[0];
         let a1 = self.0[1];
@@ -302,6 +317,7 @@ impl FieldElement5x52 {
         let b4 = rhs.0[4];
         let c = 0x1000003D1u128;
 
+        /*
         let d0 = a0 as u128 * b0 as u128;
         let d1 = a1 as u128 * b1 as u128;
         let d2 = a2 as u128 * b2 as u128;
@@ -329,8 +345,94 @@ impl FieldElement5x52 {
         let r7 = add_muldiffs(s, a4, a3, b3, b4);
         s = s - d3;
         let r8 = s;
+        */
+
+        let x0 = a0 as u128;
+        let x1 = a1 as u128;
+        let x2 = a2 as u128;
+        let x3 = a3 as u128;
+        let x4 = a4 as u128;
+        let y0 = b0 as u128;
+        let y1 = b1 as u128;
+        let y2 = b2 as u128;
+        let y3 = b3 as u128;
+        let y4 = b4 as u128;
+
+        let r0 = x0*y0;
+        let r1 = x0*y1 + x1*y0;
+        let r2 = x0*y2 + x1*y1 + x2*y0;
+        let r3 = x0*y3 + x1*y2 + x2*y1 + x3*y0;
+        let r4 = x0*y4 + x1*y3 + x2*y2 + x3*y1 + x4*y0;
+        let r5 = x1*y4 + x2*y3 + x3*y2 + x4*y1;
+        let r6 = x2*y4 + x3*y3 + x4*y2;
+        let r7 = x3*y4 + x4*y3;
+        let r8 = x4*y4;
+
+        //let (r0, r1) = split_at_64(r0 & r1 & r2 & r3 & r4 & r5 & r6 & r7 & r8, 64);
+        //return Self([r0, r1, r2 as u64, r3 as u64, r4 as u64]);
 
         // At this point `r0 + r1 * 2^52 + ... + r8 * 2^(52*8) == x * y`.
+
+        /*
+        const R: u128 = 0x1000003D10; // R = (2^256 - p) << 4
+
+        // reduce r8
+        let (r8_hi, r8_lo) = split_at_52_64(r8);
+        let r3 = r3 + (r8_lo as u128) * R;
+        //let r4 = r4 + (r8_hi as u128) * R;
+        // r8 is used up
+
+        // normalize r3
+        let (r3_hi, r3_lo) = split_at_52_64(r3);
+        let r3 = r3_lo;
+        let r4 = r4 + (r3_hi as u128) + (r8_hi as u128) * R;
+
+        // normalize r4
+        let (r4_hi, r4_lo) = split_at_52_lo64(r4);
+        let r4 = r4_lo & 0xFFFFFFFFFFFF; // low 48 bits
+        let carry = r4_lo >> 48; // high 4 bits
+        let r5 = r5 + r4_hi;
+
+        // reduce r5
+        let (r5_hi, r5_lo) = split_at_52_64(r5);
+        let r0 = r0 + (((r5_lo << 4) | carry) as u128) * (((R as u64) >> 4) as u128);
+        let r6 = r6 + (r5_hi as u128);
+        // r5 is used up
+
+        // normalize r0
+        let (r0_hi, r0_lo) = split_at_52_64(r0);
+        let r0 = r0_lo;
+        //let r1 = r1 + (r0_hi as u128);
+
+        // reduce r6
+        let (r6_hi, r6_lo) = split_at_52_64(r6);
+        let r1 = r1 + (r6_lo as u128) * R + (r0_hi as u128);
+        let r7 = r7 + (r6_hi as u128);
+        // r6 is used up
+
+        // normalize r1
+        let (r1_hi, r1_lo) = split_at_52_64(r1);
+        let r1 = r1_lo;
+        //let r2 = r2 + (r1_hi as u128);
+
+        // reduce r7
+        let (r7_hi, r7_lo) = split_at_52_64(r7);
+        let r2 = r2 + (r7_lo as u128) * R + (r1_hi as u128);
+        let r3 = r3 as u128 + (r7_hi as u128) * R;
+        // r7 is used up
+
+        // normalize r2
+        let (r2_hi, r2_lo) = split_at_52_64(r2);
+        let r2 = r2_lo;
+        let r3 = r3 + (r2_hi as u128);
+
+        // normalize r3
+        let (r3_hi, r3_lo) = split_at_52_64(r3);
+        let r3 = r3_lo;
+        let r4 = r4 + r3_hi;
+
+        Self([r0, r1, r2, r3, r4])
+        */
 
         const LOW_52_BIT_MASK: u128 = (1 << 52) - 1;
         const LOW_48_BIT_MASK: u128  = (1 << 48) - 1;
@@ -386,6 +488,7 @@ impl FieldElement5x52 {
         h2 >>= 52;
         l2 >>= 52;
 
+
         // c*2^156
         l3 = ((l2 as u64) as u128) + (((h2 as u64) as u128) * R) + out[3] as u128;
         out[3] = (l3 & LOW_52_BIT_MASK) as u64;
@@ -396,67 +499,68 @@ impl FieldElement5x52 {
 
         FieldElement5x52(out)
 
+
         /*
         // Reduction from 464 (== start of r4 + 256) bits to the end
-        let (r8_hi, r8_lo) = split_at(r8, 464 - 416);
-        let (r7_hi, r7_lo) = split_at(r7, 464 - 364);
-        let z = r8_hi + trunc_to_64(r7_hi);
+        let (r8_hi, r8_lo) = split_at_64(r8, 464 - 416);
+        let (r7_hi, r7_lo) = split_at_hi64(r7, 464 - 364);
+        let z = r8_hi + r7_hi;
         let r7 = r7_lo;
         let r8 = r8_lo as u64;
-        let r4 = r4 + z * c;
+        let r4 = r4 + z as u128 * c;
 
         // Reduction from 412 (== start of r3 + 256) bits to the end
-        let (r7_hi, r7_lo) = split_at(r7, 412 - 364);
-        let (r6_hi, r6_lo) = split_at(r6, 412 - 312);
-        let z = (r8 << 4) + r7_hi as u64 + r6_hi as u64;
+        let (r7_hi, r7_lo) = split_at_64(r7, 412 - 364);
+        let (r6_hi, r6_lo) = split_at_hi64(r6, 412 - 312);
+        let z = (r8 << 4) + r7_hi + r6_hi;
         let r6 = r6_lo;
-        let r7 = r7_lo as u64;
+        let r7 = r7_lo;
         // r8 == 0
         let r3 = r3 + z as u128 * c;
 
         // Reduction from 360 (== start of r2 + 256) bits to the end
-        let (r6_hi, r6_lo) = split_at(r6, 360 - 312);
-        let (r5_hi, r5_lo) = split_at(r5, 360 - 260);
-        let z = (r7 << 4) + r6_hi as u64 + r5_hi as u64;
+        let (r6_hi, r6_lo) = split_at_64(r6, 360 - 312);
+        let (r5_hi, r5_lo) = split_at_hi64(r5, 360 - 260);
+        let z = (r7 << 4) + r6_hi + r5_hi;
         let r5 = r5_lo;
-        let r6 = r6_lo as u64;
+        let r6 = r6_lo;
         // r7 == 0
         let r2 = r2 + z as u128 * c;
 
         // Reduction from 308 (== start of r1 + 256) bits to the end
-        let (r5_hi, r5_lo) = split_at(r5, 308 - 260);
-        let (r4_hi, r4_lo) = split_at(r4, 308 - 208);
-        let z = (r6 << 4) + r5_hi as u64 + r4_hi as u64;
+        let (r5_hi, r5_lo) = split_at_64(r5, 308 - 260);
+        let (r4_hi, r4_lo) = split_at_hi64(r4, 308 - 208);
+        let z = (r6 << 4) + r5_hi + r4_hi;
         let r4 = r4_lo;
         let r5 = r5_lo as u64;
         // r6 == 0
         let r1 = r1 + z as u128 * c;
 
         // Reduction from 256 bits to the end
-        let (r4_hi, r4_lo) = split_at(r4, 256 - 208);
-        let (r3_hi, r3_lo) = split_at(r3, 256 - 156);
-        let z = (r5 << 4) + r4_hi as u64 + r3_hi as u64;
+        let (r4_hi, r4_lo) = split_at_64(r4, 256 - 208);
+        let (r3_hi, r3_lo) = split_at_hi64(r3, 256 - 156);
+        let z = (r5 << 4) + r4_hi + r3_hi;
         let r3 = r3_lo;
-        let r4 = r4_lo as u64;
+        let r4 = r4_lo;
         // r5 == 0
         let r0 = r0 + z as u128 * c;
 
         // Transfer excesses
-        let (r0_hi, r0_lo) = split_at(r0, 52);
-        let r1 = r1 + r0_hi;
-        let r0 = r0_lo as u64;
+        let (r0_hi, r0_lo) = split_at_64(r0, 52);
+        let r1 = r1 + r0_hi as u128;
+        let r0 = r0_lo;
 
-        let (r1_hi, r1_lo) = split_at(r1, 52);
-        let r2 = r2 + r1_hi;
-        let r1 = r1_lo as u64;
+        let (r1_hi, r1_lo) = split_at_64(r1, 52);
+        let r2 = r2 + r1_hi as u128;
+        let r1 = r1_lo;
 
-        let (r2_hi, r2_lo) = split_at(r2, 52);
-        let r3 = r3 + r2_hi;
-        let r2 = r2_lo as u64;
+        let (r2_hi, r2_lo) = split_at_64(r2, 52);
+        let r3 = r3 + r2_hi as u128;
+        let r2 = r2_lo;
 
-        let (r3_hi, r3_lo) = split_at(r3, 52);
-        let r4 = r4 + r3_hi as u64;
-        let r3 = r3_lo as u64;
+        let (r3_hi, r3_lo) = split_at_64(r3, 52);
+        let r4 = r4 + r3_hi;
+        let r3 = r3_lo;
 
         debug_assert!(r0 >> 52 == 0);
         debug_assert!(r1 >> 52 == 0);
