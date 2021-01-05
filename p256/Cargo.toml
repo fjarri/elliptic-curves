@@ -21,7 +21,7 @@ ecdsa-core = { version = "0.7", package = "ecdsa", default-features = false, fea
 hex = "0.4" # TODO: switch to hex-literal
 hex-literal = "0.3"
 proptest = "0.10"
-rand_core = { version = "0.5", features = ["getrandom"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 [features]
 default = ["arithmetic", "std"]
