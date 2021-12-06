@@ -15,7 +15,7 @@ keywords = ["brainpool", "crypto", "ecc"]
 elliptic-curve = { version = "0.10", default-features = false, features = ["hazmat"] }
 
 # optional dependencies
-ecdsa = { version = "0.12", optional = true, default-features = false, features = ["der"] }
+ecdsa = { version = "0.13", optional = true, default-features = false, features = ["der"] }
 sha2 = { version = "0.9", optional = true, default-features = false }
 
 [features]
